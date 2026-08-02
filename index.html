@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ember — Citation Generator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <p class="brand">Ember</p>
+      <h1 class="headline">Paste a link. Get a citation.</h1>
+      <p class="subhead">Harvard, IEEE, APA, and more — formatted and ready to copy.</p>
+    </header>
+
+    <main class="workspace">
+      <section class="panel input-panel" aria-labelledby="link-heading">
+        <h2 id="link-heading" class="panel-title">Insert your link</h2>
+        <p class="panel-hint">Paste a webpage URL. Details appear after — only the fields still needed for that link.</p>
+
+        <label class="field-label" for="url-input">Webpage URL</label>
+        <div class="url-row">
+          <input
+            id="url-input"
+            type="url"
+            inputmode="url"
+            autocomplete="url"
+            placeholder="https://example.com/article"
+            spellcheck="false"
+          />
+          <button type="button" id="fetch-btn" class="btn btn-primary">Refresh</button>
+        </div>
+        <p id="status" class="status" role="status" aria-live="polite"></p>
+
+        <div id="details-section" class="details-section" hidden>
+          <div id="detected-block" class="detected-block" hidden>
+            <div class="section-head">
+              <h3 class="section-title">Found from your link</h3>
+              <button type="button" id="edit-all-btn" class="btn btn-ghost">Edit all</button>
+            </div>
+            <ul id="detected-list" class="detected-list"></ul>
+          </div>
+
+          <div id="needed-block" class="needed-block" hidden>
+            <h3 class="section-title">Fill in what’s missing</h3>
+            <p id="needed-hint" class="needed-hint"></p>
+
+            <div class="meta-grid" id="meta-grid">
+              <div class="field" data-field="author" hidden>
+                <label class="field-label" for="author">Author</label>
+                <input id="author" type="text" placeholder="Surname, First name" />
+              </div>
+              <div class="field" data-field="year" hidden>
+                <label class="field-label" for="year">Year</label>
+                <input id="year" type="text" placeholder="2024" maxlength="4" />
+              </div>
+              <div class="field field-span" data-field="title" hidden>
+                <label class="field-label" for="title">Title</label>
+                <input id="title" type="text" placeholder="Article or page title" />
+              </div>
+              <div class="field" data-field="site" hidden>
+                <label class="field-label" for="site">Website / Publisher</label>
+                <input id="site" type="text" placeholder="Organisation or site name" />
+              </div>
+              <div class="field" data-field="accessed" hidden>
+                <label class="field-label" for="accessed">Accessed date</label>
+                <input id="accessed" type="date" />
+              </div>
+            </div>
+          </div>
+
+          <p id="all-found" class="all-found" hidden>Everything needed was found on that page. Use Edit all if something looks wrong.</p>
+        </div>
+      </section>
+
+      <section id="output-panel" class="panel output-panel" aria-labelledby="format-heading" hidden>
+        <h2 id="format-heading" class="panel-title">Choose a format</h2>
+
+        <div class="format-wrap">
+          <label class="field-label" for="format">Citation style</label>
+          <select id="format">
+            <option value="harvard">Harvard</option>
+            <option value="harvard-au">Harvard (Australia)</option>
+            <option value="ieee">IEEE</option>
+            <option value="apa">APA 7th</option>
+            <option value="mla">MLA 9th</option>
+            <option value="chicago">Chicago (Author–Date)</option>
+            <option value="vancouver">Vancouver</option>
+            <option value="bibtex">BibTeX</option>
+          </select>
+        </div>
+
+        <button type="button" id="generate-btn" class="btn btn-accent">Generate citation</button>
+
+        <div class="citation-block" id="citation-block" hidden>
+          <div class="citation-header">
+            <span class="citation-label" id="citation-label">Citation</span>
+            <button type="button" id="copy-btn" class="btn btn-ghost">Copy</button>
+          </div>
+          <pre id="citation-output" class="citation-output" tabindex="0"></pre>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Ember formats common web sources. Always check against your institution’s guide.</p>
+    </footer>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
