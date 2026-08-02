@@ -24,7 +24,19 @@
     allFound: $("all-found"),
     editAllBtn: $("edit-all-btn"),
     outputPanel: $("output-panel"),
+    linkMode: $("link-mode"),
+    convertMode: $("convert-mode"),
+    citationInput: $("citation-input"),
+    convertBtn: $("convert-btn"),
+    sourcesBlock: $("sources-block"),
+    sourcesBtn: $("sources-btn"),
+    sourcesStatus: $("sources-status"),
+    sourcesList: $("sources-list"),
+    modeTabs: document.querySelectorAll(".mode-tab"),
   };
+
+  let activeMode = "link";
+  let sourcesSeq = 0;
 
   const FIELD_META = {
     author: { label: "Author", input: () => els.author, required: true },
@@ -372,11 +384,391 @@
     els.allFound.hidden = true;
     els.outputPanel.hidden = true;
     els.citationBlock.hidden = true;
+    els.sourcesBlock.hidden = true;
+    els.sourcesList.innerHTML = "";
+    els.sourcesStatus.textContent = "";
     forceShowAll = false;
     FIELD_ORDER.forEach((key) => {
       const wrap = document.querySelector(`[data-field="${key}"]`);
       if (wrap) wrap.hidden = true;
     });
+  }
+
+  function setMode(mode) {
+    activeMode = mode === "convert" ? "convert" : "link";
+    els.linkMode.hidden = activeMode !== "link";
+    els.convertMode.hidden = activeMode !== "convert";
+    els.modeTabs.forEach((tab) => {
+      const on = tab.dataset.mode === activeMode;
+      tab.classList.toggle("is-active", on);
+      tab.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    const detectedTitle = document.querySelector("#detected-block .section-title");
+    if (detectedTitle) {
+      detectedTitle.textContent =
+        activeMode === "convert" ? "Parsed from your citation" : "Found from your link";
+    }
+    hideDetails();
+    setStatus("");
+    lastAutoSourceQuery = "";
+    if (activeMode === "convert") els.citationInput.focus();
+    else els.url.focus();
+  }
+
+  function extractUrlFromText(text) {
+    const doi = text.match(/\b(?:doi:\s*|https?:\/\/(?:dx\.)?doi\.org\/)(10\.\d{4,9}\/[^\s,;)\]]+)/i);
+    if (doi) {
+      const id = doi[1].replace(/[.,;]+$/, "");
+      return `https://doi.org/${id}`;
+    }
+    const url = text.match(/https?:\/\/[^\s<>"')\]]+/i);
+    if (!url) return "";
+    return normalizeUrl(url[0].replace(/[.,;)]+$/, ""));
+  }
+
+  function parseCitationText(raw) {
+    const text = cleanText(raw);
+    if (!text) return null;
+
+    const url = extractUrlFromText(text);
+    let working = text
+      .replace(/https?:\/\/[^\s<>"')\]]+/gi, " ")
+      .replace(/\bdoi:\s*10\.\d{4,9}\/[^\s,;)\]]+/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    let year = "";
+    const yearParen = working.match(/\((\d{4}[a-z]?)\)/);
+    const yearBare = working.match(/(?:^|[.\s])((?:19|20)\d{2})(?:[a-z]?)(?:[.,\s]|$)/);
+    if (yearParen) year = yearParen[1].slice(0, 4);
+    else if (yearBare) year = yearBare[1];
+
+    let author = "";
+    let title = "";
+    let site = "";
+
+    // APA / Harvard-ish: Author (Year). Title. Site.
+    const apaLike = working.match(/^(.+?)\s*\((?:19|20)\d{2}[a-z]?\)\s*\.?\s*(.+)$/i);
+    if (apaLike) {
+      author = cleanText(apaLike[1].replace(/[.]+$/, ""));
+      const rest = apaLike[2].trim();
+      const parts = rest.split(/\.\s+/).map((p) => cleanText(p.replace(/^["“]|["”]$/g, ""))).filter(Boolean);
+      title = parts[0] || "";
+      site = parts[1] || parts[parts.length - 1] || "";
+      if (site && /^Available at/i.test(site)) site = parts[parts.length - 2] || "";
+    } else {
+      // MLA-ish: Author. "Title." Site, Year
+      const mlaLike = working.match(/^(.+?)\.\s*["“](.+?)["”]\.?\s*(.+)$/);
+      if (mlaLike) {
+        author = cleanText(mlaLike[1]);
+        title = cleanText(mlaLike[2]);
+        const tail = cleanText(mlaLike[3]);
+        site = cleanText(tail.split(",")[0] || tail.split(".")[0] || "");
+      } else {
+        // Fallback: first segment author, quoted or first sentence title
+        const quoted = working.match(/["“](.+?)["”]/);
+        if (quoted) {
+          title = cleanText(quoted[1]);
+          author = cleanText(working.slice(0, quoted.index).replace(/[.,]+$/, ""));
+          const after = working.slice(quoted.index + quoted[0].length).replace(/^[.,\s]+/, "");
+          site = cleanText(after.split(/[.,]/)[0] || "");
+        } else {
+          const chunks = working.split(/\.\s+/).map(cleanText).filter(Boolean);
+          author = chunks[0] || "";
+          title = chunks[1] || "";
+          site = chunks[2] || "";
+        }
+      }
+    }
+
+    author = author.replace(/\s*\((?:19|20)\d{2}[a-z]?\)\s*$/, "").replace(/^[\[\d.\]]+\s*/, "");
+    title = title.replace(/^[\[\d.\]]+\s*/, "").replace(/\.$/, "");
+    site = site
+      .replace(/\b(?:Available at|Available from|Online|Internet|Accessed|viewed|cited).*$/i, "")
+      .replace(/[<>]/g, "")
+      .replace(/[.,;]+$/, "")
+      .trim();
+
+    if (!title && !author && !url) return null;
+
+    return {
+      author,
+      year,
+      title,
+      site: site || (url ? siteNameFromHost(hostnameOf(url)) : ""),
+      url,
+    };
+  }
+
+  function convertCitation() {
+    const parsed = parseCitationText(els.citationInput.value);
+    if (!parsed) {
+      setStatus("Paste a citation first — include author, year, title, or a DOI/URL if you have one.", "error");
+      els.citationInput.focus();
+      return;
+    }
+
+    forceShowAll = false;
+    els.url.value = parsed.url || "";
+    els.author.value = parsed.author || "";
+    els.year.value = parsed.year || "";
+    els.title.value = parsed.title || "";
+    els.site.value = parsed.site || "";
+    els.accessed.value = todayISO();
+    lastFetchedUrl = parsed.url || "";
+    updateFieldVisibility();
+    generate();
+
+    const missing = FIELD_ORDER.filter((k) => k !== "accessed" && !isFieldFilled(k)).length;
+    if (missing > 0) {
+      setStatus(`Converted. Fill in ${missing} missing field${missing === 1 ? "" : "s"}, then pick a style.`, "ok");
+    } else {
+      setStatus("Citation converted. Choose a style above, or find stronger sources below.", "ok");
+    }
+  }
+
+  function setSourcesStatus(message, kind = "") {
+    els.sourcesStatus.textContent = message;
+    els.sourcesStatus.className = "status" + (kind ? ` is-${kind}` : "");
+  }
+
+  function formatOpenAlexAuthor(authorships) {
+    if (!Array.isArray(authorships) || !authorships.length) return "";
+    return authorships
+      .slice(0, 3)
+      .map((a) => cleanText(a.author?.display_name || ""))
+      .filter(Boolean)
+      .join("; ");
+  }
+
+  function credibilityBadges(work) {
+    const badges = [];
+    if (work.doi || (work.id && String(work.id).includes("doi.org"))) badges.push("DOI");
+    if (work.is_oa) badges.push("Open access");
+    if (work.type) {
+      const type = String(work.type).replace(/-/g, " ");
+      badges.push(type.charAt(0).toUpperCase() + type.slice(1));
+    }
+    if (typeof work.cited_by_count === "number" && work.cited_by_count > 0) {
+      badges.push(`${work.cited_by_count} citations`);
+    }
+    if (work.host?.includes("nature") || /nature|science|lancet|nejm|cell|pnas/i.test(work.site || "")) {
+      badges.push("High-impact");
+    }
+    return badges.slice(0, 4);
+  }
+
+  function normalizeScholarlyWork(raw, source) {
+    if (source === "openalex") {
+      const doi = raw.doi ? String(raw.doi).replace(/^https?:\/\/doi\.org\//i, "") : "";
+      const url =
+        (doi && `https://doi.org/${doi}`) ||
+        raw.primary_location?.landing_page_url ||
+        raw.primary_location?.pdf_url ||
+        raw.id ||
+        "";
+      const site =
+        cleanText(raw.primary_location?.source?.display_name) ||
+        cleanText(raw.host_venue?.display_name) ||
+        "Scholarly source";
+      return {
+        title: cleanText(raw.title || raw.display_name),
+        author: formatOpenAlexAuthor(raw.authorships),
+        year: String(raw.publication_year || yearFromAny(raw.publication_date) || ""),
+        site,
+        url: normalizeUrl(url) || url,
+        doi,
+        is_oa: Boolean(raw.open_access?.is_oa || raw.primary_location?.is_oa),
+        type: raw.type || "article",
+        cited_by_count: raw.cited_by_count || 0,
+        host: (raw.primary_location?.source?.host_organization_name || site || "").toLowerCase(),
+      };
+    }
+
+    // Crossref
+    const msg = raw;
+    const doi = cleanText(msg.DOI || "");
+    const author = Array.isArray(msg.author)
+      ? msg.author
+          .slice(0, 3)
+          .map((a) => cleanText([a.family, a.given].filter(Boolean).join(", ")))
+          .filter(Boolean)
+          .join("; ")
+      : "";
+    const year =
+      String(msg.published?.["date-parts"]?.[0]?.[0] || msg.created?.["date-parts"]?.[0]?.[0] || "") ||
+      yearFromAny(msg.created?.["date-time"]);
+    const title = cleanText(Array.isArray(msg.title) ? msg.title[0] : msg.title);
+    const site = cleanText(
+      (Array.isArray(msg["container-title"]) ? msg["container-title"][0] : msg["container-title"]) ||
+        msg.publisher ||
+        "Crossref"
+    );
+    const url = doi ? `https://doi.org/${doi}` : normalizeUrl(msg.URL) || msg.URL || "";
+    return {
+      title,
+      author,
+      year,
+      site,
+      url,
+      doi,
+      is_oa: false,
+      type: msg.type || "article",
+      cited_by_count: msg["is-referenced-by-count"] || 0,
+      host: site.toLowerCase(),
+    };
+  }
+
+  async function fetchOpenAlexSources(query) {
+    const url =
+      `https://api.openalex.org/works?search=${encodeURIComponent(query)}` +
+      `&per_page=6&sort=cited_by_count:desc&mailto=ember@local.app`;
+    const data = await fetchJson(url, 12000);
+    return (data.results || [])
+      .map((w) => normalizeScholarlyWork(w, "openalex"))
+      .filter((w) => w.title && w.url);
+  }
+
+  async function fetchCrossrefSources(query) {
+    const url =
+      `https://api.crossref.org/works?query=${encodeURIComponent(query)}` +
+      `&rows=6&select=DOI,title,author,published,created,container-title,publisher,URL,type,is-referenced-by-count`;
+    const data = await fetchJson(url, 12000);
+    return (data.message?.items || [])
+      .map((w) => normalizeScholarlyWork(w, "crossref"))
+      .filter((w) => w.title && w.url);
+  }
+
+  function dedupeSources(list) {
+    const seen = new Set();
+    return list.filter((item) => {
+      const key = (item.doi || item.url || item.title).toLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  function renderSources(sources) {
+    els.sourcesList.innerHTML = "";
+    sources.forEach((src, index) => {
+      const li = document.createElement("li");
+      li.className = "source-card";
+
+      const title = document.createElement("p");
+      title.className = "source-title";
+      title.textContent = src.title;
+
+      const meta = document.createElement("p");
+      meta.className = "source-meta";
+      meta.textContent = [src.author, src.year, src.site].filter(Boolean).join(" · ");
+
+      const badgeWrap = document.createElement("div");
+      badgeWrap.className = "source-badges";
+      credibilityBadges(src).forEach((label) => {
+        const badge = document.createElement("span");
+        badge.className = "source-badge";
+        badge.textContent = label;
+        badgeWrap.appendChild(badge);
+      });
+
+      const actions = document.createElement("div");
+      actions.className = "source-actions";
+
+      const citeBtn = document.createElement("button");
+      citeBtn.type = "button";
+      citeBtn.className = "btn-mini";
+      citeBtn.dataset.citeIndex = String(index);
+      citeBtn.textContent = "Cite this";
+
+      const openLink = document.createElement("a");
+      openLink.className = "btn-mini";
+      openLink.href = src.url;
+      openLink.target = "_blank";
+      openLink.rel = "noopener noreferrer";
+      openLink.textContent = "Open";
+
+      actions.append(citeBtn, openLink);
+      li.append(title, meta, badgeWrap, actions);
+      els.sourcesList.appendChild(li);
+    });
+    els.sourcesList._sources = sources;
+  }
+
+  async function findCredibleSources({ auto = false } = {}) {
+    const src = getSource();
+    const query = cleanText([src.title, src.author, src.site].filter(Boolean).join(" "));
+    if (!query || query === "Untitled") {
+      setSourcesStatus("Add a title (or author) first so Ember knows what to search for.", "error");
+      return;
+    }
+
+    const seq = ++sourcesSeq;
+    els.sourcesBtn.disabled = true;
+    setSourcesStatus(auto ? "Looking for more credible sources…" : "Searching scholarly databases…");
+
+    try {
+      const settled = await Promise.allSettled([
+        fetchOpenAlexSources(query),
+        fetchCrossrefSources(query),
+      ]);
+      if (seq !== sourcesSeq) return;
+
+      let combined = [];
+      for (const result of settled) {
+        if (result.status === "fulfilled") combined = combined.concat(result.value);
+      }
+
+      // Prefer DOI / highly cited / journal articles
+      combined = dedupeSources(combined)
+        .map((item) => ({
+          ...item,
+          score:
+            (item.doi ? 40 : 0) +
+            Math.min(item.cited_by_count || 0, 200) / 4 +
+            (/article|journal|review|book/i.test(item.type || "") ? 15 : 0) +
+            (item.is_oa ? 5 : 0),
+        }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 5);
+
+      // Drop the exact same URL the user already cited
+      const currentUrl = normalizeUrl(src.url);
+      combined = combined.filter((item) => normalizeUrl(item.url) !== currentUrl);
+
+      if (!combined.length) {
+        els.sourcesList.innerHTML = "";
+        setSourcesStatus("No stronger scholarly matches found. Try a clearer title or topic keywords.", "error");
+        return;
+      }
+
+      renderSources(combined);
+      setSourcesStatus(`Found ${combined.length} more credible source${combined.length === 1 ? "" : "s"}.`, "ok");
+    } catch {
+      if (seq !== sourcesSeq) return;
+      setSourcesStatus("Couldn’t reach scholarly databases right now. Try again in a moment.", "error");
+    } finally {
+      if (seq === sourcesSeq) els.sourcesBtn.disabled = false;
+    }
+  }
+
+  function citeSourceAt(index) {
+    const sources = els.sourcesList._sources || [];
+    const src = sources[index];
+    if (!src) return;
+
+    forceShowAll = false;
+    els.url.value = src.url || "";
+    els.author.value = src.author || "";
+    els.year.value = src.year || "";
+    els.title.value = src.title || "";
+    els.site.value = src.site || "";
+    els.accessed.value = todayISO();
+    lastFetchedUrl = src.url || "";
+    updateFieldVisibility();
+    generate();
+    setStatus("Loaded a more credible source. Citation updated below.", "ok");
+    els.citationBlock.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
   function fieldValue(key) {
@@ -643,27 +1035,31 @@
       const a = harvardAuthor(src.author);
       const accessed = formatAccessedLong(src.accessed);
       const accessBit = accessed ? ` (Accessed: ${accessed})` : "";
-      return `${a} (${src.year}) ${src.title}. ${src.site}. Available at: ${src.url}${accessBit}.`;
+      const avail = src.url ? ` Available at: ${src.url}${accessBit}.` : accessBit ? `${accessBit}.` : ".";
+      return `${a} (${src.year}) ${src.title}. ${src.site}.${avail}`;
     },
 
     "harvard-au"(src) {
       const a = harvardAuthor(src.author);
       const accessed = formatAccessedLong(src.accessed);
       const viewBit = accessed ? `, viewed ${accessed}` : "";
-      return `${a} ${src.year}, '${src.title}', ${src.site}${viewBit}, <${src.url}>.`;
+      const linkBit = src.url ? `, <${src.url}>` : "";
+      return `${a} ${src.year}, '${src.title}', ${src.site}${viewBit}${linkBit}.`;
     },
 
     ieee(src) {
       const a = ieeeAuthor(src.author) || "Anon.";
       const accessed = formatAccessedIEEE(src.accessed);
       const accessBit = accessed ? ` [Accessed: ${accessed}]` : "";
-      return `[1] ${a}, "${src.title}," ${src.site}. [Online]. Available: ${src.url}.${accessBit}`;
+      const avail = src.url ? ` [Online]. Available: ${src.url}.` : ".";
+      return `[1] ${a}, "${src.title}," ${src.site}.${avail}${accessBit}`;
     },
 
     apa(src) {
       const a = apaAuthor(src.author);
       const who = a ? `${a} ` : "";
-      return `${who}(${src.year}). ${src.title}. ${src.site}. ${src.url}`;
+      const link = src.url ? ` ${src.url}` : "";
+      return `${who}(${src.year}). ${src.title}. ${src.site}.${link}`;
     },
 
     mla(src) {
@@ -671,7 +1067,8 @@
       const who = a ? `${a}. ` : "";
       const accessed = formatAccessedUS(src.accessed);
       const accessBit = accessed ? ` Accessed ${accessed}.` : "";
-      return `${who}"${src.title}." ${src.site}, ${src.year}, ${src.url}.${accessBit}`;
+      const link = src.url ? `, ${src.url}.` : ".";
+      return `${who}"${src.title}." ${src.site}, ${src.year}${link}${accessBit}`;
     },
 
     chicago(src) {
@@ -679,38 +1076,46 @@
       const who = a ? `${a}. ` : "";
       const accessed = formatAccessedUS(src.accessed);
       const accessBit = accessed ? ` Accessed ${accessed}.` : "";
-      return `${who}${src.year}. "${src.title}." ${src.site}. ${src.url}.${accessBit}`;
+      const link = src.url ? ` ${src.url}.` : "";
+      return `${who}${src.year}. "${src.title}." ${src.site}.${link}${accessBit}`;
     },
 
     vancouver(src) {
       const a = vancouverAuthor(src.author) || "Anonymous";
       const accessed = formatAccessedLong(src.accessed);
       const accessBit = accessed ? ` [cited ${accessed}]` : "";
-      return `1. ${a}. ${src.title} [Internet]. ${src.site}; ${src.year}${accessBit}. Available from: ${src.url}`;
+      const avail = src.url ? ` Available from: ${src.url}` : "";
+      return `1. ${a}. ${src.title} [Internet]. ${src.site}; ${src.year}${accessBit}.${avail}`;
     },
 
     bibtex(src) {
       const key = bibtexKey(src);
       const author = src.author || "Anonymous";
       const year = src.year === "n.d." ? "" : src.year;
-      return [
+      const lines = [
         `@misc{${key},`,
         `  author = {${escapeBib(author)}},`,
         `  title = {${escapeBib(src.title)}},`,
         `  year = {${escapeBib(year)}},`,
         `  howpublished = {${escapeBib(src.site)}},`,
-        `  url = {${escapeBib(src.url)}},`,
-        `  note = {Accessed: ${formatAccessedLong(src.accessed) || "n.d."}}`,
-        `}`,
-      ].join("\n");
+      ];
+      if (src.url) lines.push(`  url = {${escapeBib(src.url)}},`);
+      lines.push(`  note = {Accessed: ${formatAccessedLong(src.accessed) || "n.d."}}`, `}`);
+      return lines.join("\n");
     },
   };
 
+  let lastAutoSourceQuery = "";
+
   function generate() {
     const src = getSource();
-    if (!src.url) {
+    if (activeMode === "link" && !src.url) {
       setStatus("Insert a valid link before generating.", "error");
       els.url.focus();
+      return;
+    }
+    if (!src.title && !src.author) {
+      setStatus("Add a title or author before generating.", "error");
       return;
     }
 
@@ -723,6 +1128,17 @@
     els.citationBlock.style.animation = "";
     els.copyBtn.textContent = "Copy";
     els.copyBtn.classList.remove("is-copied");
+
+    els.sourcesBlock.hidden = false;
+
+    const readyQuery = cleanText([src.title, src.author].filter(Boolean).join(" "));
+    const complete = Boolean(src.title && src.year && src.site);
+    if (complete && readyQuery && readyQuery !== lastAutoSourceQuery) {
+      lastAutoSourceQuery = readyQuery;
+      findCredibleSources({ auto: true });
+    } else if (!els.sourcesList.children.length) {
+      setSourcesStatus("Finished citing? Find peer-reviewed sources on the same topic.");
+    }
   }
 
   async function copyCitation() {
@@ -755,8 +1171,27 @@
   });
   els.generateBtn.addEventListener("click", generate);
   els.copyBtn.addEventListener("click", copyCitation);
+  els.convertBtn.addEventListener("click", convertCitation);
+  els.sourcesBtn.addEventListener("click", () => findCredibleSources());
   els.format.addEventListener("change", () => {
     if (!els.citationBlock.hidden) generate();
+  });
+
+  els.modeTabs.forEach((tab) => {
+    tab.addEventListener("click", () => setMode(tab.dataset.mode));
+  });
+
+  els.citationInput.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      convertCitation();
+    }
+  });
+
+  els.sourcesList.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-cite-index]");
+    if (!btn) return;
+    citeSourceAt(Number(btn.getAttribute("data-cite-index")));
   });
 
   els.editAllBtn.addEventListener("click", () => {
@@ -832,4 +1267,5 @@
   });
 
   hideDetails();
+  setMode("link");
 })();

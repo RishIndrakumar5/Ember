@@ -13,27 +13,51 @@
   <div class="page">
     <header class="hero">
       <p class="brand">Ember</p>
-      <h1 class="headline">Paste a link. Get a citation.</h1>
-      <p class="subhead">Harvard, IEEE, APA, and more — formatted and ready to copy.</p>
+      <h1 class="headline">Cite a link. Convert a citation.</h1>
+      <p class="subhead">Harvard, IEEE, APA, and more — then find stronger sources to back it up.</p>
     </header>
 
     <main class="workspace">
       <section class="panel input-panel" aria-labelledby="link-heading">
-        <h2 id="link-heading" class="panel-title">Insert your link</h2>
-        <p class="panel-hint">Paste a webpage URL. Details appear after — only the fields still needed for that link.</p>
-
-        <label class="field-label" for="url-input">Webpage URL</label>
-        <div class="url-row">
-          <input
-            id="url-input"
-            type="url"
-            inputmode="url"
-            autocomplete="url"
-            placeholder="https://example.com/article"
-            spellcheck="false"
-          />
-          <button type="button" id="fetch-btn" class="btn btn-primary">Refresh</button>
+        <div class="mode-tabs" role="tablist" aria-label="Citation input mode">
+          <button type="button" class="mode-tab is-active" role="tab" id="mode-link" aria-selected="true" data-mode="link">From a link</button>
+          <button type="button" class="mode-tab" role="tab" id="mode-convert" aria-selected="false" data-mode="convert">Convert citation</button>
         </div>
+
+        <div id="link-mode" class="mode-panel">
+          <h2 id="link-heading" class="panel-title">Insert your link</h2>
+          <p class="panel-hint">Paste a webpage URL. Details appear after — only the fields still needed for that link.</p>
+
+          <label class="field-label" for="url-input">Webpage URL</label>
+          <div class="url-row">
+            <input
+              id="url-input"
+              type="url"
+              inputmode="url"
+              autocomplete="url"
+              placeholder="https://example.com/article"
+              spellcheck="false"
+            />
+            <button type="button" id="fetch-btn" class="btn btn-primary">Refresh</button>
+          </div>
+        </div>
+
+        <div id="convert-mode" class="mode-panel" hidden>
+          <h2 id="convert-heading" class="panel-title">Convert a citation</h2>
+          <p class="panel-hint">Paste an existing citation. Ember pulls out the details and reformats it into your chosen style.</p>
+
+          <label class="field-label" for="citation-input">Paste citation</label>
+          <textarea
+            id="citation-input"
+            rows="5"
+            placeholder="Smith, J. (2023). Climate policy in practice. Nature. https://doi.org/10.1038/example"
+            spellcheck="false"
+          ></textarea>
+          <div class="convert-actions">
+            <button type="button" id="convert-btn" class="btn btn-primary">Convert</button>
+          </div>
+        </div>
+
         <p id="status" class="status" role="status" aria-live="polite"></p>
 
         <div id="details-section" class="details-section" hidden>
@@ -103,11 +127,21 @@
           </div>
           <pre id="citation-output" class="citation-output" tabindex="0"></pre>
         </div>
+
+        <div class="sources-block" id="sources-block" hidden>
+          <div class="section-head">
+            <h3 class="section-title">More credible sources</h3>
+            <button type="button" id="sources-btn" class="btn btn-ghost">Find sources</button>
+          </div>
+          <p class="sources-hint">After you finish citing, search peer-reviewed and scholarly work on the same topic.</p>
+          <p id="sources-status" class="status" role="status" aria-live="polite"></p>
+          <ul id="sources-list" class="sources-list"></ul>
+        </div>
       </section>
     </main>
 
     <footer class="footer">
-      <p>Ember formats common web sources. Always check against your institution’s guide.</p>
+      <p>Ember formats web sources and suggests scholarly alternatives. Always check against your institution’s guide.</p>
     </footer>
   </div>
 
