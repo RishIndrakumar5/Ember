@@ -14,7 +14,7 @@
     <header class="hero">
       <p class="brand">Ember</p>
       <h1 class="headline">Cite a link. Convert a citation.</h1>
-      <p class="subhead">Harvard, IEEE, APA, and more — then find stronger sources to back it up.</p>
+      <p class="subhead">Harvard, IEEE, APA, and more — credibility-checked against three similar sources first.</p>
     </header>
 
     <main class="workspace">
@@ -118,7 +118,18 @@
           </select>
         </div>
 
-        <button type="button" id="generate-btn" class="btn btn-accent">Generate citation</button>
+        <button type="button" id="generate-btn" class="btn btn-accent">Check credibility &amp; cite</button>
+
+        <div class="credibility-block" id="credibility-block" hidden>
+          <div class="section-head">
+            <h3 class="section-title">Credibility check</h3>
+            <span id="credibility-score" class="cred-score" hidden></span>
+          </div>
+          <p id="credibility-status" class="status" role="status" aria-live="polite"></p>
+          <p id="credibility-verdict" class="cred-verdict" hidden></p>
+          <p class="cred-hint">Ember compares your link with three similar sources from Semantic Scholar, Crossref, and OpenAlex before citing.</p>
+          <ul id="credibility-list" class="cred-list"></ul>
+        </div>
 
         <div class="citation-block" id="citation-block" hidden>
           <div class="citation-header">
@@ -130,10 +141,10 @@
 
         <div class="sources-block" id="sources-block" hidden>
           <div class="section-head">
-            <h3 class="section-title">More credible sources</h3>
-            <button type="button" id="sources-btn" class="btn btn-ghost">Find sources</button>
+            <h3 class="section-title">Suggested sources</h3>
+            <button type="button" id="sources-btn" class="btn btn-ghost">Refresh</button>
           </div>
-          <p class="sources-hint">After you finish citing, search peer-reviewed and scholarly work on the same topic.</p>
+          <p class="sources-hint">More sources on the same topic after your citation is ready.</p>
           <p id="sources-status" class="status" role="status" aria-live="polite"></p>
           <ul id="sources-list" class="sources-list"></ul>
         </div>
@@ -141,7 +152,7 @@
     </main>
 
     <footer class="footer">
-      <p>Ember formats web sources and suggests scholarly alternatives. Always check against your institution’s guide.</p>
+      <p>Ember checks similar sources for credibility, formats citations, then suggests more reading. Always verify with your institution’s guide.</p>
     </footer>
   </div>
 

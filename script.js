@@ -32,11 +32,19 @@
     sourcesBtn: $("sources-btn"),
     sourcesStatus: $("sources-status"),
     sourcesList: $("sources-list"),
+    credibilityBlock: $("credibility-block"),
+    credibilityStatus: $("credibility-status"),
+    credibilityVerdict: $("credibility-verdict"),
+    credibilityScore: $("credibility-score"),
+    credibilityList: $("credibility-list"),
     modeTabs: document.querySelectorAll(".mode-tab"),
   };
 
   let activeMode = "link";
   let sourcesSeq = 0;
+  let credibilitySeq = 0;
+  let lastCredibilityKey = "";
+  let lastCredibilityResult = null;
 
   const FIELD_META = {
     author: { label: "Author", input: () => els.author, required: true },
@@ -385,8 +393,15 @@
     els.outputPanel.hidden = true;
     els.citationBlock.hidden = true;
     els.sourcesBlock.hidden = true;
+    els.credibilityBlock.hidden = true;
     els.sourcesList.innerHTML = "";
     els.sourcesStatus.textContent = "";
+    els.credibilityList.innerHTML = "";
+    els.credibilityStatus.textContent = "";
+    els.credibilityVerdict.hidden = true;
+    els.credibilityScore.hidden = true;
+    lastCredibilityKey = "";
+    lastCredibilityResult = null;
     forceShowAll = false;
     FIELD_ORDER.forEach((key) => {
       const wrap = document.querySelector(`[data-field="${key}"]`);
@@ -705,7 +720,7 @@
 
     const seq = ++sourcesSeq;
     els.sourcesBtn.disabled = true;
-    setSourcesStatus(auto ? "Looking for more credible sources…" : "Searching scholarly databases…");
+    setSourcesStatus(auto ? "Finding more sources on this topic…" : "Searching scholarly databases…");
 
     try {
       const settled = await Promise.allSettled([
@@ -730,20 +745,31 @@
             (item.is_oa ? 5 : 0),
         }))
         .sort((a, b) => b.score - a.score)
-        .slice(0, 5);
+        .slice(0, 6);
 
-      // Drop the exact same URL the user already cited
+      // Drop the exact same URL the user already cited + credibility comparison picks
       const currentUrl = normalizeUrl(src.url);
-      combined = combined.filter((item) => normalizeUrl(item.url) !== currentUrl);
+      const comparedUrls = new Set(
+        (lastCredibilityResult?.comparisons || [])
+          .map((c) => normalizeUrl(c.url))
+          .filter(Boolean)
+      );
+      combined = combined.filter((item) => {
+        const u = normalizeUrl(item.url);
+        return u && u !== currentUrl && !comparedUrls.has(u);
+      });
 
       if (!combined.length) {
         els.sourcesList.innerHTML = "";
-        setSourcesStatus("No stronger scholarly matches found. Try a clearer title or topic keywords.", "error");
+        setSourcesStatus("No extra scholarly matches found. Try a clearer title or topic keywords.", "error");
         return;
       }
 
       renderSources(combined);
-      setSourcesStatus(`Found ${combined.length} more credible source${combined.length === 1 ? "" : "s"}.`, "ok");
+      setSourcesStatus(
+        `Suggested ${combined.length} more source${combined.length === 1 ? "" : "s"} after your citation.`,
+        "ok"
+      );
     } catch {
       if (seq !== sourcesSeq) return;
       setSourcesStatus("Couldn’t reach scholarly databases right now. Try again in a moment.", "error");
@@ -765,10 +791,355 @@
     els.site.value = src.site || "";
     els.accessed.value = todayISO();
     lastFetchedUrl = src.url || "";
+    lastCredibilityKey = "";
+    lastCredibilityResult = null;
     updateFieldVisibility();
-    generate();
-    setStatus("Loaded a more credible source. Citation updated below.", "ok");
+    generate({ skipCredibilityCache: true });
+    setStatus("Loaded a suggested source. Credibility will be re-checked.", "ok");
     els.citationBlock.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  function setCredibilityStatus(message, kind = "") {
+    els.credibilityStatus.textContent = message;
+    els.credibilityStatus.className = "status" + (kind ? ` is-${kind}` : "");
+  }
+
+  function domainReputation(url) {
+    const host = hostnameOf(url).toLowerCase();
+    if (!host) return { tier: "unknown", points: 20, label: "Unknown site" };
+
+    const high = [
+      "edu", "gov", "ac.uk", "gov.uk", "mil",
+      "nature.com", "science.org", "sciencedirect.com", "springer.com", "wiley.com",
+      "nih.gov", "who.int", "cdc.gov", "nasa.gov", "arxiv.org", "pubmed.ncbi.nlm.nih.gov",
+      "bbc.com", "bbc.co.uk", "reuters.com", "apnews.com", "nytimes.com", "theguardian.com",
+      "wikipedia.org", "britannica.com", "doi.org", "jstor.org", "ieee.org", "acm.org",
+      "harvard.edu", "stanford.edu", "mit.edu", "ox.ac.uk", "cam.ac.uk",
+    ];
+    const medium = [
+      "forbes.com", "bloomberg.com", "cnn.com", "washingtonpost.com", "npr.org",
+      "medium.com", "substack.com", "github.com", "linkedin.com", "ted.com",
+    ];
+    const low = [
+      "blogspot.com", "wordpress.com", "tumblr.com", "wixsite.com", "squarespace.com",
+      "tiktok.com", "facebook.com", "pinterest.com",
+    ];
+
+    if (host.endsWith(".edu") || host.endsWith(".gov") || host.endsWith(".ac.uk") || host.endsWith(".gov.uk")) {
+      return { tier: "high", points: 40, label: "Academic / government domain" };
+    }
+    if (high.some((d) => host === d || host.endsWith(`.${d}`))) {
+      return { tier: "high", points: 38, label: "Well-known reputable publisher" };
+    }
+    if (medium.some((d) => host === d || host.endsWith(`.${d}`))) {
+      return { tier: "medium", points: 24, label: "Established web publisher" };
+    }
+    if (low.some((d) => host === d || host.endsWith(`.${d}`))) {
+      return { tier: "low", points: 8, label: "Personal / social / blog domain" };
+    }
+    return { tier: "unknown", points: 16, label: "Unranked domain — verify carefully" };
+  }
+
+  async function fetchSemanticScholarComparison(query) {
+    const api =
+      `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}` +
+      `&limit=1&fields=title,authors,year,url,venue,citationCount,externalIds,abstract`;
+    const data = await fetchJson(api, 12000);
+    const paper = data?.data?.[0];
+    if (!paper) {
+      return {
+        outlet: "Semantic Scholar",
+        found: false,
+        title: "No close Semantic Scholar match",
+        author: "",
+        year: "",
+        site: "Semantic Scholar",
+        url: `https://www.semanticscholar.org/search?q=${encodeURIComponent(query)}`,
+        note: "No strong peer-reviewed match found in Semantic Scholar.",
+        cited_by_count: 0,
+        doi: "",
+      };
+    }
+
+    const authors = Array.isArray(paper.authors)
+      ? paper.authors
+          .slice(0, 3)
+          .map((a) => cleanText(a.name))
+          .filter(Boolean)
+          .join("; ")
+      : "";
+    const doi = cleanText(paper.externalIds?.DOI || "");
+    const url =
+      (doi && `https://doi.org/${doi}`) ||
+      normalizeUrl(paper.url) ||
+      (paper.paperId ? `https://www.semanticscholar.org/paper/${paper.paperId}` : "");
+    const cited = paper.citationCount || 0;
+    const venue = cleanText(paper.venue) || "Semantic Scholar";
+
+    return {
+      outlet: "Semantic Scholar",
+      found: true,
+      title: cleanText(paper.title),
+      author: authors,
+      year: paper.year ? String(paper.year) : "",
+      site: venue,
+      url,
+      doi,
+      cited_by_count: cited,
+      note: cited
+        ? `Peer-reviewed index · cited ${cited} times.`
+        : "Peer-reviewed / scholarly record from Semantic Scholar.",
+    };
+  }
+
+  async function fetchCrossrefComparison(query) {
+    const works = await fetchCrossrefSources(query);
+    const best = works[0];
+    if (!best) {
+      return {
+        outlet: "Crossref",
+        found: false,
+        title: "No close scholarly match",
+        author: "",
+        year: "",
+        site: "Crossref",
+        url: `https://search.crossref.org/?q=${encodeURIComponent(query)}`,
+        note: "No strong DOI-backed article found for this topic.",
+        cited_by_count: 0,
+        doi: "",
+      };
+    }
+    return {
+      outlet: "Crossref",
+      found: true,
+      ...best,
+      note: best.doi
+        ? `DOI-backed work${best.cited_by_count ? ` · cited ${best.cited_by_count} times` : ""}.`
+        : "Scholarly record from Crossref.",
+    };
+  }
+
+  async function fetchOpenAlexComparison(query) {
+    const works = await fetchOpenAlexSources(query);
+    const best = works[0];
+    if (!best) {
+      return {
+        outlet: "OpenAlex",
+        found: false,
+        title: "No close OpenAlex match",
+        author: "",
+        year: "",
+        site: "OpenAlex",
+        url: `https://openalex.org/works?page=1&filter=default.search:${encodeURIComponent(query)}`,
+        note: "No strong scholarly match found in OpenAlex.",
+        cited_by_count: 0,
+        doi: "",
+      };
+    }
+    return {
+      outlet: "OpenAlex",
+      found: true,
+      ...best,
+      note: best.cited_by_count
+        ? `Cited ${best.cited_by_count} times in scholarly literature.`
+        : "Scholarly work indexed by OpenAlex.",
+    };
+  }
+
+  function scoreCredibility(src, comparisons, reputation) {
+    let score = reputation.points;
+    const foundCount = comparisons.filter((c) => c.found).length;
+    score += foundCount * 15;
+
+    const scholarlyHits = comparisons.filter(
+      (c) =>
+        c.found &&
+        (c.outlet === "Crossref" || c.outlet === "OpenAlex" || c.outlet === "Semantic Scholar")
+    );
+    if (scholarlyHits.length) score += 10;
+    const cites = scholarlyHits.reduce((n, c) => n + (c.cited_by_count || 0), 0);
+    if (cites >= 50) score += 10;
+    else if (cites >= 10) score += 6;
+    else if (cites > 0) score += 3;
+
+    if (src.url && /^https:/i.test(src.url)) score += 4;
+    if (src.author) score += 4;
+    if (src.year && src.year !== "n.d.") score += 4;
+    if (src.title && src.title !== "Untitled") score += 3;
+
+    score = Math.max(0, Math.min(100, Math.round(score)));
+
+    let level = "mixed";
+    let headline = "Mixed credibility signals";
+    let detail = "";
+
+    if (score >= 70) {
+      level = "strong";
+      headline = "Looks reasonably credible";
+      detail =
+        foundCount >= 2
+          ? `Your source aligns with ${foundCount} of 3 comparison outlets, and the domain rates as ${reputation.label.toLowerCase()}.`
+          : `Domain looks solid (${reputation.label.toLowerCase()}), though fewer external matches were found.`;
+    } else if (score >= 40) {
+      level = "mixed";
+      headline = "Use with caution";
+      detail =
+        foundCount >= 1
+          ? `Some related coverage exists, but corroboration is limited. Domain: ${reputation.label.toLowerCase()}.`
+          : `Weak corroboration from scholarly indexes. Prefer one of the comparison sources if possible.`;
+    } else {
+      level = "weak";
+      headline = "Weak credibility signals";
+      detail =
+        "Few trusted outlets cover this topic in a similar way. Consider citing a comparison source instead.";
+    }
+
+    return { score, level, headline, detail, foundCount, reputation };
+  }
+
+  function renderCredibilityComparisons(comparisons) {
+    els.credibilityList.innerHTML = "";
+    comparisons.forEach((item) => {
+      const li = document.createElement("li");
+      li.className = "cred-card";
+
+      const top = document.createElement("div");
+      top.className = "cred-card-top";
+
+      const outlet = document.createElement("span");
+      outlet.className = "cred-source-label";
+      outlet.textContent = item.outlet;
+
+      const match = document.createElement("span");
+      match.className = `cred-match ${item.found ? "is-found" : "is-missing"}`;
+      match.textContent = item.found ? "Similar source found" : "No close match";
+
+      top.append(outlet, match);
+
+      const title = document.createElement("p");
+      title.className = "source-title";
+      title.textContent = item.title;
+
+      const meta = document.createElement("p");
+      meta.className = "source-meta";
+      meta.textContent = [item.author, item.year, item.site].filter(Boolean).join(" · ") || item.note;
+
+      const note = document.createElement("p");
+      note.className = "source-meta";
+      note.textContent = item.note;
+
+      const actions = document.createElement("div");
+      actions.className = "source-actions";
+
+      if (item.found && item.url) {
+        const citeBtn = document.createElement("button");
+        citeBtn.type = "button";
+        citeBtn.className = "btn-mini";
+        citeBtn.textContent = "Cite this instead";
+        citeBtn.addEventListener("click", () => {
+          forceShowAll = false;
+          els.url.value = item.url || "";
+          els.author.value = item.author || "";
+          els.year.value = item.year || "";
+          els.title.value = item.title || "";
+          els.site.value = item.site || item.outlet;
+          els.accessed.value = todayISO();
+          lastFetchedUrl = item.url || "";
+          lastCredibilityKey = "";
+          lastCredibilityResult = null;
+          updateFieldVisibility();
+          generate({ skipCredibilityCache: true });
+          setStatus(`Switched to the ${item.outlet} source. Re-checking credibility.`, "ok");
+        });
+        actions.appendChild(citeBtn);
+      }
+
+      const openLink = document.createElement("a");
+      openLink.className = "btn-mini";
+      openLink.href = item.url;
+      openLink.target = "_blank";
+      openLink.rel = "noopener noreferrer";
+      openLink.textContent = "Open";
+      actions.appendChild(openLink);
+
+      li.append(top, title, meta, note, actions);
+      els.credibilityList.appendChild(li);
+    });
+  }
+
+  async function runCredibilityCheck(src) {
+    const query = cleanText([src.title, src.author].filter(Boolean).join(" "));
+    const credibilityKey = [normalizeUrl(src.url) || "", query, src.site || ""].join("|");
+
+    if (lastCredibilityKey === credibilityKey && lastCredibilityResult) {
+      const cached = lastCredibilityResult;
+      els.credibilityBlock.hidden = false;
+      renderCredibilityComparisons(cached.comparisons);
+      els.credibilityScore.hidden = false;
+      els.credibilityScore.textContent = `${cached.summary.score}/100 · ${cached.summary.level}`;
+      els.credibilityScore.className = `cred-score is-${cached.summary.level}`;
+      els.credibilityVerdict.hidden = false;
+      els.credibilityVerdict.className = `cred-verdict is-${cached.summary.level}`;
+      els.credibilityVerdict.textContent = `${cached.summary.headline}. ${cached.summary.detail}`;
+      setCredibilityStatus(
+        `Compared against ${cached.comparisons.length} sources — ${cached.summary.foundCount} close match${cached.summary.foundCount === 1 ? "" : "es"} found.`,
+        cached.summary.level === "weak" ? "error" : "ok"
+      );
+      return cached;
+    }
+
+    const seq = ++credibilitySeq;
+    els.credibilityBlock.hidden = false;
+    els.credibilityVerdict.hidden = true;
+    els.credibilityScore.hidden = true;
+    els.credibilityList.innerHTML = "";
+    setCredibilityStatus("Checking 3 similar sources (Semantic Scholar, Crossref, OpenAlex)…");
+
+    const reputation = domainReputation(src.url);
+    const settled = await Promise.allSettled([
+      fetchSemanticScholarComparison(query || src.site || src.url),
+      fetchCrossrefComparison(query || src.site || "research"),
+      fetchOpenAlexComparison(query || src.site || "research"),
+    ]);
+
+    if (seq !== credibilitySeq) return null;
+
+    const comparisons = settled.map((result, i) => {
+      const outlet = ["Semantic Scholar", "Crossref", "OpenAlex"][i];
+      if (result.status === "fulfilled") return result.value;
+      return {
+        outlet,
+        found: false,
+        title: `${outlet} check failed`,
+        author: "",
+        year: "",
+        site: outlet,
+        url: "#",
+        note: "Could not reach this source right now.",
+      };
+    });
+
+    const summary = scoreCredibility(src, comparisons, reputation);
+    const result = { comparisons, summary, key: credibilityKey };
+    lastCredibilityKey = credibilityKey;
+    lastCredibilityResult = result;
+
+    renderCredibilityComparisons(comparisons);
+
+    els.credibilityScore.hidden = false;
+    els.credibilityScore.textContent = `${summary.score}/100 · ${summary.level}`;
+    els.credibilityScore.className = `cred-score is-${summary.level}`;
+
+    els.credibilityVerdict.hidden = false;
+    els.credibilityVerdict.className = `cred-verdict is-${summary.level}`;
+    els.credibilityVerdict.textContent = `${summary.headline}. ${summary.detail}`;
+
+    setCredibilityStatus(
+      `Compared against ${comparisons.length} sources — ${summary.foundCount} close match${summary.foundCount === 1 ? "" : "es"} found.`,
+      summary.level === "weak" ? "error" : "ok"
+    );
+
+    return result;
   }
 
   function fieldValue(key) {
@@ -1105,9 +1476,18 @@
     },
   };
 
+  function renderCitationOnly() {
+    const src = getSource();
+    if (!src.title && !src.author) return;
+    if (activeMode === "link" && !src.url) return;
+    const style = els.format.value;
+    els.citationLabel.textContent = FORMAT_NAMES[style] || "Citation";
+    els.citationOutput.textContent = formatters[style](src);
+  }
+
   let lastAutoSourceQuery = "";
 
-  function generate() {
+  async function generate(options = {}) {
     const src = getSource();
     if (activeMode === "link" && !src.url) {
       setStatus("Insert a valid link before generating.", "error");
@@ -1120,24 +1500,50 @@
     }
 
     const style = els.format.value;
-    els.citationLabel.textContent = FORMAT_NAMES[style] || "Citation";
-    els.citationOutput.textContent = formatters[style](src);
-    els.citationBlock.hidden = false;
-    els.citationBlock.style.animation = "none";
-    void els.citationBlock.offsetWidth;
-    els.citationBlock.style.animation = "";
-    els.copyBtn.textContent = "Copy";
-    els.copyBtn.classList.remove("is-copied");
+    els.generateBtn.disabled = true;
+    const previousLabel = els.generateBtn.textContent;
+    els.generateBtn.textContent = "Checking sources…";
 
-    els.sourcesBlock.hidden = false;
+    try {
+      // Before citing: compare with 3 similar sources
+      if (options.skipCredibilityCache) {
+        lastCredibilityKey = "";
+        lastCredibilityResult = null;
+      }
+      const check = await runCredibilityCheck(src);
+      if (!check) return;
 
-    const readyQuery = cleanText([src.title, src.author].filter(Boolean).join(" "));
-    const complete = Boolean(src.title && src.year && src.site);
-    if (complete && readyQuery && readyQuery !== lastAutoSourceQuery) {
-      lastAutoSourceQuery = readyQuery;
-      findCredibleSources({ auto: true });
-    } else if (!els.sourcesList.children.length) {
-      setSourcesStatus("Finished citing? Find peer-reviewed sources on the same topic.");
+      els.citationLabel.textContent = FORMAT_NAMES[style] || "Citation";
+      els.citationOutput.textContent = formatters[style](src);
+      els.citationBlock.hidden = false;
+      els.citationBlock.style.animation = "none";
+      void els.citationBlock.offsetWidth;
+      els.citationBlock.style.animation = "";
+      els.copyBtn.textContent = "Copy";
+      els.copyBtn.classList.remove("is-copied");
+
+      els.sourcesBlock.hidden = false;
+
+      const level = check.summary.level;
+      if (level === "strong") {
+        setStatus("Credibility check passed. Citation is ready — copy it below.", "ok");
+      } else if (level === "mixed") {
+        setStatus("Citation ready. Credibility is mixed — review the 3 comparison sources.", "ok");
+      } else {
+        setStatus("Citation ready, but credibility looks weak — consider citing a comparison source.", "error");
+      }
+
+      // After citing: suggest more sources
+      const readyQuery = cleanText([src.title, src.author].filter(Boolean).join(" "));
+      if (readyQuery && readyQuery !== lastAutoSourceQuery) {
+        lastAutoSourceQuery = readyQuery;
+        findCredibleSources({ auto: true });
+      } else if (!els.sourcesList.children.length) {
+        setSourcesStatus("Browse suggested sources on the same topic below.");
+      }
+    } finally {
+      els.generateBtn.disabled = false;
+      els.generateBtn.textContent = previousLabel || "Check credibility & cite";
     }
   }
 
@@ -1174,7 +1580,7 @@
   els.convertBtn.addEventListener("click", convertCitation);
   els.sourcesBtn.addEventListener("click", () => findCredibleSources());
   els.format.addEventListener("change", () => {
-    if (!els.citationBlock.hidden) generate();
+    if (!els.citationBlock.hidden) renderCitationOnly();
   });
 
   els.modeTabs.forEach((tab) => {
@@ -1218,16 +1624,15 @@
     const input = FIELD_META[key].input();
     input.addEventListener("input", () => {
       if (!els.detailsSection.hidden) {
-        // Keep edit-all mode while typing; refresh lists on blur
         if (!forceShowAll) updateFieldVisibility();
-        if (!els.citationBlock.hidden) generate();
+        if (!els.citationBlock.hidden) renderCitationOnly();
       }
     });
     input.addEventListener("blur", () => {
       if (!els.detailsSection.hidden) {
         if (forceShowAll && FIELD_ORDER.every(isFieldFilled)) forceShowAll = false;
         updateFieldVisibility();
-        if (!els.citationBlock.hidden) generate();
+        if (!els.citationBlock.hidden) renderCitationOnly();
       }
     });
   });

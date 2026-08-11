@@ -435,6 +435,147 @@ select:focus {
   border-color: var(--cream);
 }
 
+/* Credibility check */
+.credibility-block {
+  margin-top: 1.35rem;
+  padding: 1.15rem;
+  background: var(--red-dark);
+  border: 3px solid var(--orange);
+  animation: reveal 0.45s ease both;
+}
+
+.credibility-block[hidden] {
+  display: none !important;
+}
+
+.cred-hint {
+  margin: 0 0 0.85rem;
+  color: #ffd7b0;
+  font-size: 0.95rem;
+}
+
+.cred-verdict {
+  margin: 0 0 0.85rem;
+  padding: 0.75rem 0.9rem;
+  background: var(--cream);
+  color: var(--ink);
+  border: 3px solid var(--orange);
+  font-size: 1rem;
+  line-height: 1.45;
+}
+
+.cred-verdict.is-strong {
+  border-color: #2e7d32;
+}
+
+.cred-verdict.is-mixed {
+  border-color: var(--orange-bright);
+}
+
+.cred-verdict.is-weak {
+  border-color: var(--red);
+}
+
+.cred-score {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.35rem 0.7rem;
+  background: var(--orange);
+  color: var(--cream);
+  border: 2px solid var(--orange-bright);
+  font-family: var(--font-display);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.cred-score.is-strong {
+  background: #2e7d32;
+  border-color: #66bb6a;
+}
+
+.cred-score.is-mixed {
+  background: var(--orange);
+  border-color: var(--orange-bright);
+}
+
+.cred-score.is-weak {
+  background: var(--red);
+  border-color: #ff8a80;
+}
+
+.cred-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.cred-card {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.85rem 0.95rem;
+  background: var(--cream);
+  color: var(--ink);
+  border: 2px solid var(--orange);
+}
+
+.cred-card-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.cred-source-label {
+  font-family: var(--font-display);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--red);
+}
+
+.cred-match {
+  font-family: var(--font-display);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.12rem 0.4rem;
+  border: 2px solid var(--orange);
+  background: #ffe0b2;
+  color: var(--red-deep);
+}
+
+.cred-match.is-found {
+  background: #c8e6c9;
+  border-color: #2e7d32;
+  color: #1b5e20;
+}
+
+.cred-match.is-missing {
+  background: #ffcdd2;
+  border-color: var(--red);
+  color: #b71c1c;
+}
+
+.cred-card .source-title {
+  margin: 0;
+}
+
+.cred-card .source-meta {
+  margin: 0;
+}
+
+.cred-card .source-actions {
+  margin-top: 0.25rem;
+}
+
 /* Citation output */
 .citation-block {
   margin-top: 1.35rem;
